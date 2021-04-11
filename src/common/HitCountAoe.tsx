@@ -6,6 +6,20 @@ import React from 'react';
 
 import Spell from './SPELLS/Spell';
 
+class FinalizedCast {
+  event: CastEvent | null;
+  castHits: number;
+
+  constructor(event: CastEvent | null, castHits: number) {
+    this.event = event;
+    this.castHits = castHits;
+  }
+
+  get isSingleTarget(): boolean {
+    return this.castHits === 1;
+  }
+}
+
 // time after a cast in which direct damage from the spellId will be associated with the cast
 const DAMAGE_WINDOW = 250; //ms
 
@@ -54,13 +68,23 @@ class HitCountAoe extends Analyzer {
   }
 
   onCast(event: CastEvent) {
+    this.updateCastTrackers(event);
+  }
+
+  updateCastTrackers(event: CastEvent): FinalizedCast {
+    const finalizedCast = new FinalizedCast(this.lastCastEvent, this.lastCastHits);
     this.finalizePreviousCast();
     this.casts += 1;
     this.lastCastEvent = event;
     this.lastCastHits = 0;
+    return finalizedCast;
   }
 
   onDamage(event: DamageEvent) {
+    this.updateHitTrackers(event);
+  }
+
+  updateHitTrackers(event: DamageEvent) {
     if (
       event.tick ||
       !this.lastCastEvent ||
@@ -124,3 +148,4 @@ class HitCountAoe extends Analyzer {
 }
 
 export default HitCountAoe;
+export { FinalizedCast, HitCountAoe };

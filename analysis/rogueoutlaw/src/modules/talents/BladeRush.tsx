@@ -1,6 +1,12 @@
+import HitCountAoe, { FinalizedCast } from 'common/HitCountAoe';
 import SPELLS from 'common/SPELLS';
 import Analyzer, { Options, SELECTED_PLAYER } from 'parser/core/Analyzer';
-import Events, { EventType, UpdateSpellUsableEvent } from 'parser/core/Events';
+import Events, {
+  CastEvent,
+  DamageEvent,
+  EventType,
+  UpdateSpellUsableEvent,
+} from 'parser/core/Events';
 import { When } from 'parser/core/ParseResults';
 import Enemies from 'parser/shared/modules/Enemies';
 
@@ -18,6 +24,20 @@ class BladeRushDelayedCast {
   }
 }
 
+class FightSegment {
+  startTimestamp!: number;
+  endTimestamp!: number;
+
+  constructor(startTimestamp: number, endTimestamp: number) {
+    this.startTimestamp = startTimestamp;
+    this.endTimestamp = endTimestamp;
+  }
+
+  get duration(): number {
+    return this.endTimestamp - this.startTimestamp;
+  }
+}
+
 export const ENERGY_THRESHOLD = 70;
 
 class BladeRush extends Analyzer {
@@ -28,22 +48,31 @@ class BladeRush extends Analyzer {
 
   protected enemies!: Enemies;
   protected energyTracker!: EnergyTracker;
+  protected bladeFlurryHitCount: HitCountAoe;
   protected bladeRushLowEnergyCasts: BladeRushDelayedCast[] = [];
   protected bladeRushAllCasts: BladeRushDelayedCast[] = [];
   protected offCdTimestamp: number = 0;
   protected isFirstCast: boolean = true;
   protected bladeRushOffCd: boolean = false;
   protected isDelayedLowEnergyBladeRushCast: boolean = false;
+  protected stSegments: FightSegment[] = [];
+  protected aoeSegments: FightSegment[] = [];
+  protected bladeRushBadSTSegments: FightSegment[] = [];
+  protected bladeRushBadAoeSegments: FightSegment[] = [];
+  timeOffCdST = 0;
+  timeOffCdAoe = 0;
   foo = 60;
 
   constructor(options: Options) {
     super(options);
+    this.bladeFlurryHitCount = new HitCountAoe(options, SPELLS.BLADE_FLURRY);
     this.active = this.selectedCombatant.hasTalent(SPELLS.BLADE_RUSH_TALENT.id);
     this.addEventListener(
       Events.UpdateSpellUsable.by(SELECTED_PLAYER).spell(SPELLS.BLADE_RUSH_TALENT),
       this.onBladeRushUsable,
     );
-    this.addEventListener(Events.cast.by(SELECTED_PLAYER), this.maybeMarkCurrentBladeRushCastBad);
+    this.addEventListener(Events.cast.by(SELECTED_PLAYER), this.onCast);
+    this.addEventListener(Events.damage.by(SELECTED_PLAYER), this.onDamage);
   }
 
   isSingleTargetFight(): boolean {
@@ -63,7 +92,7 @@ class BladeRush extends Analyzer {
       case EventType.BeginCooldown: {
         if (!this.isFirstCast) {
           this.updateCooldownTrackers(event);
-          this.bladeRushOffCd = true;
+          this.bladeRushOffCd = false;
         } else {
           this.isFirstCast = false;
         }
@@ -71,15 +100,45 @@ class BladeRush extends Analyzer {
       }
       case EventType.EndCooldown: {
         this.offCdTimestamp = event.timestamp;
-        this.bladeRushOffCd = false;
+        this.bladeRushOffCd = true;
         break;
       }
     }
   }
 
+  onCast(event: CastEvent) {
+    this.maybeMarkCurrentBladeRushCastBad();
+    const finalizedCast = this.bladeFlurryHitCount.updateCastTrackers(event);
+    if (finalizedCast.event) {
+      const fightSegment = new FightSegment(finalizedCast.event.timestamp, event.timestamp);
+      this.updateFightSegments(fightSegment, finalizedCast);
+    }
+  }
+
+  onDamage(event: DamageEvent) {
+    this.bladeFlurryHitCount.updateHitTrackers(event);
+  }
+
   maybeMarkCurrentBladeRushCastBad() {
     if (this.energyTracker.current < ENERGY_THRESHOLD && this.bladeRushOffCd) {
       this.isDelayedLowEnergyBladeRushCast = true;
+    }
+  }
+
+  maybeUpdateBadSegments(fightSegments: FightSegment[], fightSegment: FightSegment) {
+    if (!this.bladeRushOffCd) {
+      return null;
+    }
+    fightSegments.push(fightSegment);
+  }
+
+  updateFightSegments(fightSegment: FightSegment, finalizedCast: FinalizedCast) {
+    if (finalizedCast.isSingleTarget) {
+      this.maybeUpdateBadSegments(this.bladeRushBadSTSegments, fightSegment);
+      this.stSegments.push(fightSegment);
+    } else {
+      this.maybeUpdateBadSegments(this.bladeRushBadAoeSegments, fightSegment);
+      this.aoeSegments.push(fightSegment);
     }
   }
 
@@ -91,18 +150,29 @@ class BladeRush extends Analyzer {
     return timeOffCd;
   }
 
+  fightTypeDuration(fightSegments: FightSegment[]): number {
+    if (fightSegments.length === 0) {
+      return this.owner.fightDuration;
+    }
+    let segmentDuration = 0;
+    fightSegments.forEach((fightSegment) => (segmentDuration += fightSegment.duration));
+    return segmentDuration;
+  }
+
   get percentTimeOffCdAoe(): number {
     if (this.isSingleTargetFight()) {
       return 0;
     }
-    return this.totalTimeOffCd(this.bladeRushAllCasts) / this.owner.fightDuration;
+    return this.totalTimeOffCd(this.bladeRushAllCasts) / this.fightTypeDuration(this.aoeSegments);
   }
 
   get percentTimeOffCdST(): number {
     if (!this.isSingleTargetFight()) {
       return 0;
     }
-    return this.totalTimeOffCd(this.bladeRushLowEnergyCasts) / this.owner.fightDuration;
+    return (
+      this.totalTimeOffCd(this.bladeRushLowEnergyCasts) / this.fightTypeDuration(this.stSegments)
+    );
   }
 
   suggestions(when: When) {
@@ -111,6 +181,39 @@ class BladeRush extends Analyzer {
       this.percentTimeOffCdST,
       ENERGY_THRESHOLD,
     );
+    this.timeOffCdAoe = this.fightTypeDuration(this.bladeRushBadAoeSegments);
+    this.timeOffCdST = this.fightTypeDuration(this.bladeRushBadSTSegments);
+    console.log(
+      'Total duration ' +
+        this.owner.fightDuration +
+        ' ST Duration ' +
+        this.fightTypeDuration(this.stSegments) +
+        ' Aoe Duration ' +
+        this.fightTypeDuration(this.aoeSegments) +
+        ' Sum ' +
+        (this.fightTypeDuration(this.stSegments) + this.fightTypeDuration(this.aoeSegments)),
+    );
+    console.log(
+      'Ration ' +
+        (this.fightTypeDuration(this.stSegments) + this.fightTypeDuration(this.aoeSegments)) /
+          this.owner.fightDuration,
+    );
+    console.log(
+      ' Off CD St ' +
+        this.timeOffCdST +
+        ' Off CD Aoe ' +
+        this.timeOffCdAoe +
+        ' Sum Off Cd ' +
+        (this.timeOffCdST + this.timeOffCdAoe) +
+        ' Total off Cd ' +
+        this.totalTimeOffCd(this.bladeRushLowEnergyCasts),
+    );
+    console.log(
+      ' Ratio ' +
+        (this.timeOffCdST + this.timeOffCdAoe) / this.totalTimeOffCd(this.bladeRushAllCasts),
+    );
+    console.log('Avg targets hit ' + this.bladeFlurryHitCount.averageTargetsHit);
+    console.log(this.enemies.getEntities());
     bladeRushSuggestions.maybeGiveSuggestionAoe(when);
     bladeRushSuggestions.maybeGiveSuggestionST(when);
   }
