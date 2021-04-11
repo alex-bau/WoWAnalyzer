@@ -133,15 +133,6 @@ class Abilities extends CoreAbilities {
         gcd: {
           static: standardGcd,
         },
-        castEfficiency: {
-          suggestion: true,
-          extraSuggestion: (
-            <>
-              You should delay using it to line it up with{' '}
-              <SpellLink id={SPELLS.BLADE_FLURRY.id} icon /> in AoE scenarios.
-            </>
-          ),
-        },
         enabled: combatant.hasTalent(SPELLS.BLADE_RUSH_TALENT.id),
       },
       {

@@ -1,56 +1,107 @@
 import SPELLS from 'common/SPELLS';
-import RESOURCE_TYPES, { getResource } from 'game/RESOURCE_TYPES';
 import Analyzer, { Options, SELECTED_PLAYER } from 'parser/core/Analyzer';
-import Events, { CastEvent } from 'parser/core/Events';
-import Abilities from 'parser/core/modules/Abilities';
-import SpellUsable from 'parser/shared/modules/SpellUsable';
+import Events, { EventType, UpdateSpellUsableEvent } from 'parser/core/Events';
+import { When } from 'parser/core/ParseResults';
+import Enemies from 'parser/shared/modules/Enemies';
+
+import { EnergyTracker } from '@wowanalyzer/rogue';
+
+import BladeRushSuggestions from './BladeRushSuggestions';
+
+class BladeRushDelayedCast {
+  timestamp!: number;
+  timeOffCd!: number;
+
+  constructor(timestamp: number, timeOffCd: number) {
+    this.timestamp = timestamp;
+    this.timeOffCd = timeOffCd;
+  }
+}
+
+export const ENERGY_THRESHOLD = 70;
 
 class BladeRush extends Analyzer {
   static dependencies = {
-    abilities: Abilities,
-    spellUsable: SpellUsable,
+    enemies: Enemies,
+    energyTracker: EnergyTracker,
   };
 
-  protected abilities!: Abilities;
-  protected spellUsable!: SpellUsable;
+  protected enemies!: Enemies;
+  protected energyTracker!: EnergyTracker;
+  protected bladeRushLowEnergyCasts: BladeRushDelayedCast[] = [];
+  protected bladeRushAllCasts: BladeRushDelayedCast[] = [];
+  protected offCdTimestamp: number = 0;
+  protected isFirstCast: boolean = true;
+  foo = 60;
 
   constructor(options: Options) {
     super(options);
     this.active = this.selectedCombatant.hasTalent(SPELLS.BLADE_RUSH_TALENT.id);
     this.addEventListener(
-      Events.cast
-        .by(SELECTED_PLAYER)
-        .spell([
-          SPELLS.DISPATCH,
-          SPELLS.EVISCERATE,
-          SPELLS.KIDNEY_SHOT,
-          SPELLS.BETWEEN_THE_EYES,
-          SPELLS.SLICE_AND_DICE,
-        ]),
-      this.onFinishMove,
+      Events.UpdateSpellUsable.by(SELECTED_PLAYER).spell(SPELLS.BLADE_RUSH_TALENT),
+      this.onBladeRushUsable,
     );
   }
 
-  onFinishMove(event: CastEvent) {
-    const cpCost = getResource(event.classResources, RESOURCE_TYPES.COMBO_POINTS.id)?.cost;
-    if (!cpCost) {
-      return;
+  isSingleTargetFight(): boolean {
+    return Object.values(this.enemies.getEntities()).length === 1;
+  }
+
+  updateCooldownTrackers(event: UpdateSpellUsableEvent) {
+    const timeOffCd = event.timestamp - this.offCdTimestamp;
+    if (this.energyTracker.current < ENERGY_THRESHOLD) {
+      this.bladeRushLowEnergyCasts.push(new BladeRushDelayedCast(event.timestamp, timeOffCd));
     }
-    if (this.spellUsable.isOnCooldown(SPELLS.BLADE_RUSH_TALENT.id)) {
-      const cooldownRemaining = this.spellUsable.cooldownRemaining(SPELLS.BLADE_RUSH_TALENT.id);
-      const extraCDR = this.selectedCombatant.hasBuff(SPELLS.TRUE_BEARING.id) ? cpCost * 1000 : 0;
-      const cooldownReduction = cpCost * 1000 + extraCDR;
-      const newChargeCDR = cooldownRemaining - cooldownReduction;
-      if (newChargeCDR < 0) {
-        this.spellUsable.endCooldown(SPELLS.BLADE_RUSH_TALENT.id, false, event.timestamp);
-      } else {
-        this.spellUsable.reduceCooldown(
-          SPELLS.BLADE_RUSH_TALENT.id,
-          cooldownReduction,
-          event.timestamp,
-        );
+    this.bladeRushAllCasts.push(new BladeRushDelayedCast(event.timestamp, timeOffCd));
+  }
+
+  onBladeRushUsable(event: UpdateSpellUsableEvent) {
+    switch (event.trigger) {
+      case EventType.BeginCooldown: {
+        if (!this.isFirstCast) {
+          this.updateCooldownTrackers(event);
+        } else {
+          this.isFirstCast = false;
+        }
+        break;
+      }
+      case EventType.EndCooldown: {
+        this.offCdTimestamp = event.timestamp;
+        break;
       }
     }
+  }
+
+  totalTimeOffCd(bladeRushDelayedCasts: BladeRushDelayedCast[]): number {
+    let timeOffCd = 0;
+    bladeRushDelayedCasts.forEach(
+      (BladeRushDelayedCast) => (timeOffCd += BladeRushDelayedCast.timeOffCd),
+    );
+    return timeOffCd;
+  }
+
+  get percentTimeOffCdAoe(): number {
+    if (this.isSingleTargetFight()) {
+      return 0;
+    }
+    return this.totalTimeOffCd(this.bladeRushAllCasts) / this.owner.fightDuration;
+  }
+
+  get percentTimeOffCdST(): number {
+    if (!this.isSingleTargetFight()) {
+      return 0;
+    }
+    return this.totalTimeOffCd(this.bladeRushLowEnergyCasts) / this.owner.fightDuration;
+  }
+
+  suggestions(when: When) {
+    const bladeRushSuggestions = new BladeRushSuggestions(
+      this.percentTimeOffCdAoe,
+      this.percentTimeOffCdST,
+      ENERGY_THRESHOLD,
+    );
+    bladeRushSuggestions.maybeGiveSuggestionAoe(when);
+    bladeRushSuggestions.maybeGiveSuggestionST(when);
   }
 }
 
