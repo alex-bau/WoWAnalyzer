@@ -32,6 +32,8 @@ class BladeRush extends Analyzer {
   protected bladeRushAllCasts: BladeRushDelayedCast[] = [];
   protected offCdTimestamp: number = 0;
   protected isFirstCast: boolean = true;
+  protected bladeRushOffCd: boolean = false;
+  protected isDelayedLowEnergyBladeRushCast: boolean = false;
   foo = 60;
 
   constructor(options: Options) {
@@ -41,6 +43,7 @@ class BladeRush extends Analyzer {
       Events.UpdateSpellUsable.by(SELECTED_PLAYER).spell(SPELLS.BLADE_RUSH_TALENT),
       this.onBladeRushUsable,
     );
+    this.addEventListener(Events.cast.by(SELECTED_PLAYER), this.maybeMarkCurrentBladeRushCastBad);
   }
 
   isSingleTargetFight(): boolean {
@@ -49,7 +52,7 @@ class BladeRush extends Analyzer {
 
   updateCooldownTrackers(event: UpdateSpellUsableEvent) {
     const timeOffCd = event.timestamp - this.offCdTimestamp;
-    if (this.energyTracker.current < ENERGY_THRESHOLD) {
+    if (this.isDelayedLowEnergyBladeRushCast) {
       this.bladeRushLowEnergyCasts.push(new BladeRushDelayedCast(event.timestamp, timeOffCd));
     }
     this.bladeRushAllCasts.push(new BladeRushDelayedCast(event.timestamp, timeOffCd));
@@ -60,6 +63,7 @@ class BladeRush extends Analyzer {
       case EventType.BeginCooldown: {
         if (!this.isFirstCast) {
           this.updateCooldownTrackers(event);
+          this.bladeRushOffCd = true;
         } else {
           this.isFirstCast = false;
         }
@@ -67,8 +71,15 @@ class BladeRush extends Analyzer {
       }
       case EventType.EndCooldown: {
         this.offCdTimestamp = event.timestamp;
+        this.bladeRushOffCd = false;
         break;
       }
+    }
+  }
+
+  maybeMarkCurrentBladeRushCastBad() {
+    if (this.energyTracker.current < ENERGY_THRESHOLD && this.bladeRushOffCd) {
+      this.isDelayedLowEnergyBladeRushCast = true;
     }
   }
 
