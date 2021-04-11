@@ -1,17 +1,18 @@
 import { t } from '@lingui/macro';
+import HitCountAoe from 'common/HitCountAoe';
 import SPELLS from 'common/SPELLS';
 import { SpellLink } from 'interface';
+import { Options } from 'parser/core/Analyzer';
+import { NumberThreshold, ThresholdStyle, When } from 'parser/core/ParseResults';
 import { STATISTIC_ORDER } from 'parser/ui/StatisticBox';
 import React from 'react';
-
-import HitCountAoE from '../core/HitCountAoE';
 
 /**
  * Despite being an AoE ability Brutal Slash is usually the best talent on its row for single target fights.
  * It can be useful to count how many targets it hits, but hitting just one is not a mistake.
  */
-class BrutalSlashHitCount extends HitCountAoE {
-  get hitNoneThresholds() {
+class BrutalSlashHitCount extends HitCountAoe {
+  get hitNoneThresholds(): NumberThreshold {
     return {
       actual: this.hitZeroPerMinute,
       isGreaterThan: {
@@ -19,14 +20,14 @@ class BrutalSlashHitCount extends HitCountAoE {
         average: 0.2,
         major: 0.5,
       },
-      style: 'number',
+      style: ThresholdStyle.NUMBER,
     };
   }
 
   static spell = SPELLS.BRUTAL_SLASH_TALENT;
 
-  constructor(...args) {
-    super(...args);
+  constructor(options: Options) {
+    super(options, SPELLS.BRUTAL_SLASH_TALENT);
     this.active = this.selectedCombatant.hasTalent(SPELLS.BRUTAL_SLASH_TALENT.id);
   }
 
@@ -34,7 +35,7 @@ class BrutalSlashHitCount extends HitCountAoE {
     return this.generateStatistic(STATISTIC_ORDER.OPTIONAL(10));
   }
 
-  suggestions(when) {
+  suggestions(when: When) {
     when(this.hitNoneThresholds).addSuggestion((suggest, actual, recommended) =>
       suggest(
         <>

@@ -1,16 +1,21 @@
 import { t } from '@lingui/macro';
+import HitCountAoe from 'common/HitCountAoe';
 import SPELLS from 'common/SPELLS';
 import { SpellLink } from 'interface';
+import { Options } from 'parser/core/Analyzer';
+import { NumberThreshold, ThresholdStyle, When } from 'parser/core/ParseResults';
 import { STATISTIC_ORDER } from 'parser/ui/StatisticBox';
 import React from 'react';
-
-import HitCountAoE from '../core/HitCountAoE';
 
 /**
  * Even with its DoT, thrash shouldn't be used against a single target
  */
-class ThrashHitCount extends HitCountAoE {
-  get hitNoneThresholds() {
+class ThrashHitCount extends HitCountAoe {
+  constructor(options: Options) {
+    super(options, SPELLS.THRASH_FERAL);
+  }
+
+  get hitNoneThresholds(): NumberThreshold {
     return {
       actual: this.hitZeroPerMinute,
       isGreaterThan: {
@@ -18,11 +23,11 @@ class ThrashHitCount extends HitCountAoE {
         average: 0.2,
         major: 0.5,
       },
-      style: 'number',
+      style: ThresholdStyle.NUMBER,
     };
   }
 
-  get hitJustOneThresholds() {
+  get hitJustOneThresholds(): NumberThreshold {
     return {
       actual: this.hitJustOnePerMinute,
       isGreaterThan: {
@@ -30,7 +35,7 @@ class ThrashHitCount extends HitCountAoE {
         average: 0.5,
         major: 3.0,
       },
-      style: 'number',
+      style: ThresholdStyle.NUMBER,
     };
   }
 
@@ -40,7 +45,7 @@ class ThrashHitCount extends HitCountAoE {
     return this.generateStatistic(STATISTIC_ORDER.OPTIONAL(11));
   }
 
-  suggestions(when) {
+  suggestions(when: When) {
     when(this.hitNoneThresholds).addSuggestion((suggest, actual, recommended) =>
       suggest(
         <>

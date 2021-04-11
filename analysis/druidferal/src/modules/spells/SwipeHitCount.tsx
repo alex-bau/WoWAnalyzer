@@ -1,17 +1,18 @@
 import { t } from '@lingui/macro';
+import HitCountAoe from 'common/HitCountAoe';
 import SPELLS from 'common/SPELLS';
 import { SpellLink } from 'interface';
+import { Options } from 'parser/core/Analyzer';
+import { NumberThreshold, ThresholdStyle, When } from 'parser/core/ParseResults';
 import { STATISTIC_ORDER } from 'parser/ui/StatisticBox';
 import React from 'react';
-
-import HitCountAoE from '../core/HitCountAoE';
 
 /**
  * Swipe shouldn't be used against a single target, the player's resources are better spent
  * on Shred against a single target.
  */
-class SwipeHitCount extends HitCountAoE {
-  get hitNoneThresholds() {
+class SwipeHitCount extends HitCountAoe {
+  get hitNoneThresholds(): NumberThreshold {
     return {
       actual: this.hitZeroPerMinute,
       isGreaterThan: {
@@ -19,11 +20,15 @@ class SwipeHitCount extends HitCountAoE {
         average: 0.2,
         major: 0.5,
       },
-      style: 'number',
+      style: ThresholdStyle.NUMBER,
     };
   }
 
-  get hitJustOneThresholds() {
+  constructor(options: Options) {
+    super(options, SPELLS.SWIPE_CAT);
+  }
+
+  get hitJustOneThresholds(): NumberThreshold {
     return {
       actual: this.hitJustOnePerMinute,
       isGreaterThan: {
@@ -31,17 +36,15 @@ class SwipeHitCount extends HitCountAoE {
         average: 0.5,
         major: 3.0,
       },
-      style: 'number',
+      style: ThresholdStyle.NUMBER,
     };
   }
-
-  static spell = SPELLS.SWIPE_CAT;
 
   statistic() {
     return this.generateStatistic(STATISTIC_ORDER.OPTIONAL(10));
   }
 
-  suggestions(when) {
+  suggestions(when: When) {
     when(this.hitNoneThresholds).addSuggestion((suggest, actual, recommended) =>
       suggest(
         <>
